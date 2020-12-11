@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <title>Lil' YouTube Player Thingy</title>
+    <style>
+      html, body { padding:0; margin:0; overflow:hidden; }
+      iframe { width:100vw; height:100vh; }
+    </style>
+  </head>
+  <body>
+    <!--
+    google-chrome --no-user-gesture-required --autoplay-policy=no-user-gesture-required --kiosk kittencam.html
+    https://developers.google.com/youtube/iframe_api_reference
+    -->   
+    
+    <div id="player"></div>
+
+    <script>
+      const tag = document.createElement('script');
+      tag.src = 'https://www.youtube.com/iframe_api';
+      const firstScriptTag = document.getElementsByTagName('script')[0];
+      firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
+
+      let player;
+      let ws;
+      const refreshTimeout = 3600000; // 1 hour
+      const viewportHeight = window.innerHeight;
+      const viewportWidth = window.innerWidth;
+      const kioskId = '<%= kioskId %>';
+      
+      function onYouTubeIframeAPIReady() {
+        player = new YT.Player('player', {
+          height: viewportHeight,
+          width: viewportWidth,
+          playerVars: { 'autoplay': 1, 'controls': 0 },
+          events: {
+            'onReady': onPlayerReady,
+            'onStateChange': onPlayerStateChange,
+            'onError': onPlayerError
+          },
+          videoId: '<%= videoId %>'
+        });
+      }
+
+      function onPlayerReady(event) {
+        console.log('onPlayerReady');
+        event.target.setVolume(0);
+        startWebsocket();
+      }
+      
+      function onPlayerError(event) {
+        console.log('onPlayerError');
+        const videoId = event.target.getVideoData().video_id;
+        
+        if (!videoId) {
+          return;
+        }
+        
+        console.log(`Reporting stale video: ${videoId} with error code: ${event.data}`);
+        ws.send(JSON.stringify({type: 'stale', kioskId, videoId, errorCode: event.data}));
+        
+        location.reload();
+      }
+
+      function onPlayerStateChange(event) {
+        // -1 = unstarted
+        // YT.PlayerState.ENDED = 0
+        // YT.PlayerState.PLAYING = 1
+        // YT.PlayerState.PAUSED = 2
+        // YT.PlayerState.BUFFERING = 3
+        // YT.PlayerState.CUED = 5
+        console.log(`onPlayerStateChange: State changed to: ${event.data}`); 
+      }
+      
+      function startWebsocket() {
+        ws = new WebSocket('wss://whip-agreement.glitch.me/ws');
+        
+        ws.onopen = () => console.log('Websocket opened');
+        ws.onerror = e => console.log('Websocket error', e);
+        
+        ws.onclose = e => {
+          console.log('Websocket closed, reconnecting...');
+          ws = null;
+          setTimeout(startWebsocket, 5000);
+        };
+        
+        ws.onmessage = e => {
+          console.log('Message received', e);
+          const data = JSON.parse(e.data);
+          
+          switch (data.type) {
+            case 'interrupt':
+              const { videoId } = data;
+              if (videoId) {
+                console.log(`Immediately playing video ${videoId}`);
+                player.loadVideoById({ videoId });
+              }
+              break;
+            
+            default:
+              break;
+          }
+        };
+      }
+      
+      window.setTimeout(() => {
+        console.log('Reloading page...');
+        location.reload();
+      }, refreshTimeout);
+      
+      let countdown = refreshTimeout;
+      (function countdownTimer() {
+        console.log(`Page reloads in ${countdown/60000} minutes...`);
+        countdown -= 60000;
+        window.setTimeout(countdownTimer, 60000);        
+      })();
+    </script>
+  </body>
+</html>
